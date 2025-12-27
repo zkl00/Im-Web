@@ -23,6 +23,7 @@
 		<div class="btn-group">
 			<el-button v-if="isFriend" type="primary" @click="onSendMessage()">发消息</el-button>
 			<el-button v-else type="primary" @click="onAddFriend()">加为好友</el-button>
+			<el-button v-if="!isSelf" type="danger" @click="onAddBlack()">拉黑</el-button>
 		</div>
 	</div>
 
@@ -101,6 +102,28 @@ export default {
 			if (this.user.headImage) {
 				this.$eventBus.$emit("openFullImage", this.user.headImage);
 			}
+		},
+		onAddBlack() {
+			this.$confirm(`确认将 "${this.user.nickName}" 加入黑名单吗？`, '确认拉黑', {
+				confirmButtonText: '确定',
+				cancelButtonText: '取消',
+				type: 'warning'
+			}).then(() => {
+				const userID = sessionStorage.getItem("userID");
+				this.$http({
+					url: "/friend/add_black",
+					method: "POST",
+					data: {
+						ownerUserID: userID,
+						blackUserID: this.user.id
+					}
+				}).then(() => {
+					this.$message.success("已将对方加入黑名单");
+					this.show = false;
+				});
+			}).catch(() => {
+				// 用户取消操作
+			});
 		}
 	},
 	computed: {
@@ -109,6 +132,10 @@ export default {
 		},
 		friendInfo() {
 			return this.friendStore.findFriend(this.user.id);
+		},
+		isSelf() {
+			const userID = sessionStorage.getItem("userID");
+			return this.user.id === userID;
 		}
 	}
 }

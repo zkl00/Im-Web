@@ -37,6 +37,10 @@ export default {
 				name: '发送消息',
 				icon: 'el-icon-chat-dot-round'
 			}, {
+				key: 'BLACK',
+				name: '拉黑',
+				icon: 'el-icon-warning'
+			}, {
 				key: 'DELETE',
 				name: '删除好友',
 				icon: 'el-icon-delete'

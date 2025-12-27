@@ -15,7 +15,7 @@
 					<div v-for="(friend) in friends" :key="friend.id">
 						<friend-item :friend="friend" :active="friend.id === activeFriend.id"
 							@chat="onSendMessage(friend)" @delete="onDelFriend(friend)"
-							@click.native="onActiveItem(friend)">
+							@black="onAddBlack(friend)" @click.native="onActiveItem(friend)">
 						</friend-item>
 					</div>
 					<div v-if="i < friendValues.length - 1" class="divider"></div>
@@ -110,6 +110,27 @@ export default {
 					this.chatStore.removePrivateChat(friend.id);
 				})
 			})
+		},
+		onAddBlack(friend) {
+			this.$confirm(`确认将 "${friend.nickName}" 加入黑名单吗？`, '确认拉黑', {
+				confirmButtonText: '确定',
+				cancelButtonText: '取消',
+				type: 'warning'
+			}).then(() => {
+				const userID = sessionStorage.getItem("userID");
+				this.$http({
+					url: '/friend/add_black',
+					method: 'POST',
+					data: {
+						ownerUserID: userID,
+						blackUserID: friend.id
+					}
+				}).then(() => {
+					this.$message.success("已将对方加入黑名单");
+				});
+			}).catch(() => {
+				// 用户取消操作
+			});
 		},
 		onAddFriend(user) {
 			const userID = sessionStorage.getItem("userID");

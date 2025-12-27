@@ -78,7 +78,11 @@ http.interceptors.response.use(async response => {
 	}
 
 	// 错误提示
-	const errMsg = res.errMsg || res.message || '请求失败';
+	let errMsg = res.errMsg || res.message || '请求失败';
+	// 处理 MongoDB 重复键错误，显示友好提示
+	if (res.errCode === 500 && errMsg.includes('duplicate key')) {
+		errMsg = '记录已存在，请勿重复操作';
+	}
 	Message({
 		message: errMsg,
 		type: 'error',

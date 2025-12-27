@@ -26,13 +26,13 @@
 			<div class="container-box" v-show="activeGroup.id">
 				<div class="group-info">
 					<div>
-						<file-upload v-show="isOwner" class="avatar-uploader" uploadType="avatar" :showLoading="true"
+						<file-upload v-show="canManage" class="avatar-uploader" uploadType="avatar" :showLoading="true"
 							:maxSize="maxSize" @success="onUploadSuccess"
 							:fileTypes="['image/jpeg', 'image/png', 'image/jpg', 'image/webp']">
 							<img v-if="activeGroup.headImage" :src="activeGroup.headImage" class="avatar">
 							<i v-else class="el-icon-plus avatar-uploader-icon"></i>
 						</file-upload>
-						<head-image v-show="!isOwner" class="avatar" :size="160" :url="activeGroup.headImage"
+						<head-image v-show="!canManage" class="avatar" :size="160" :url="activeGroup.headImage"
 							:name="activeGroup.showGroupName" radius="10%" @click.native="showFullImage()">
 						</head-image>
 						<el-button class="send-btn" icon="el-icon-position" type="primary" @click="onSendMessage()">发消息
@@ -41,7 +41,7 @@
 					<el-form class="form" label-width="130px" :model="activeGroup" :rules="rules" size="small"
 						ref="groupForm">
 						<el-form-item label="群聊名称" prop="name">
-							<el-input v-model="activeGroup.name" :disabled="!isOwner" maxlength="20"></el-input>
+							<el-input v-model="activeGroup.name" :disabled="!canManage" maxlength="20"></el-input>
 						</el-form-item>
 						<el-form-item label="群主">
 							<el-input :value="ownerName" disabled></el-input>
@@ -55,7 +55,7 @@
 								:placeholder="userStore.userInfo.nickName"></el-input>
 						</el-form-item>
 						<el-form-item label="群公告">
-							<el-input v-model="activeGroup.notice" :disabled="!isOwner" type="textarea" :rows="3"
+							<el-input v-model="activeGroup.notice" :disabled="!canManage" type="textarea" :rows="3"
 								maxlength="1024" placeholder="群主未设置"></el-input>
 						</el-form-item>
 						<div>
@@ -77,7 +77,7 @@
 							<add-group-member ref="addGroupMember" :groupId="activeGroup.id" :members="groupMembers"
 								@reload="loadGroupMembers"></add-group-member>
 						</div>
-						<div class="member-tools" v-if="isOwner">
+						<div class="member-tools" v-if="canManage">
 							<div class="tool-btn" title="选择成员移出群聊" @click="onRemove()">
 								<i class="el-icon-minus"></i>
 							</div>
@@ -235,12 +235,12 @@ export default {
 		},
 		onRemoveComplete(members) {
 			let userIds = members.map(m => m.userId);
-			// V9 API: /group/kick_group
+			// V10 API: /group/kick_group
 			this.$http({
 				url: "/group/kick_group",
 				method: 'POST',
 				data: {
-					groupID: this.activeGroup.id,
+					groupID: String(this.activeGroup.id),
 					kickedUserIDs: userIds
 				}
 			}).then(() => {
@@ -341,22 +341,22 @@ export default {
 			}
 		},
 		loadGroupMembers() {
-			// V9 API: /group/get_group_member_list
+			// V10 API: /group/get_group_member_list
 			this.$http({
 				url: '/group/get_group_member_list',
 				method: "POST",
 				data: {
-					groupID: this.activeGroup.id,
+					groupID: String(this.activeGroup.id),
 					pagination: {
 						pageNumber: 1,
 						showNumber: 500
 					}
 				}
 			}).then((data) => {
-				// V9 返回格式: { members: [...], total: n }
 				const members = (data?.members || []).map(m => ({
 					userId: m.userID,
 					nickName: m.nickname,
+					showNickName: m.nickname,
 					headImage: m.faceURL,
 					remark: '',
 					roleLevel: m.roleLevel
@@ -369,13 +369,14 @@ export default {
 			this.groupMembers = [];
 		},
 		firstLetter(strText) {
+			if (!strText) return '#';
 			// 使用pinyin-pro库将中文转换为拼音
 			let pinyinOptions = {
 				toneType: 'none', // 无声调
 				type: 'normal' // 普通拼音
 			};
 			let pyText = pinyin(strText, pinyinOptions);
-			return pyText[0];
+			return pyText?.[0] || '#';
 		},
 		isEnglish(character) {
 			return /^[A-Za-z]+$/.test(character);
@@ -386,17 +387,29 @@ export default {
 			let member = this.groupMembers.find(m => m.userId == this.activeGroup.ownerId);
 			return member && member.showNickName;
 		},
+		// 当前用户在群中的角色等级：100=群主, 60=管理员, 20=普通成员
+		myRoleLevel() {
+			const myId = this.userStore.userInfo.id;
+			const member = this.groupMembers.find(m => m.userId == myId);
+			return member ? member.roleLevel : 20;
+		},
+		// 是否是群主
 		isOwner() {
-			return this.activeGroup.ownerId == this.userStore.userInfo.id;
+			return this.myRoleLevel === 100;
+		},
+		// 是否有管理权限（群主或管理员）
+		canManage() {
+			return this.myRoleLevel >= 60;
 		},
 		groupMap() {
 			// 按首字母分组
 			let map = new Map();
 			this.groupStore.groups.forEach((g) => {
-				if (g.quit || (this.searchText && !g.showGroupName.includes(this.searchText))) {
+				const groupName = g.showGroupName || g.name || '';
+				if (g.quit || (this.searchText && !groupName.includes(this.searchText))) {
 					return;
 				}
-				let letter = this.firstLetter(g.showGroupName).toUpperCase();
+				let letter = this.firstLetter(groupName).toUpperCase();
 				// 非英文一律为#组
 				if (!this.isEnglish(letter)) {
 					letter = "#"

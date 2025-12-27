@@ -41,7 +41,7 @@ export default {
 	},
 	props: {
 		groupId: {
-			type: Number
+			type: [Number, String]
 		}
 	},
 	methods: {

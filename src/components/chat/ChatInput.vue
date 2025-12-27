@@ -18,7 +18,7 @@ export default {
 	components: { ChatAtBox },
 	props: {
 		ownerId: {
-			type: Number,
+			type: [Number, String],
 		},
 		groupMembers: {
 			type: Array,

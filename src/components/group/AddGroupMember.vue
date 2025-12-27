@@ -77,6 +77,10 @@ export default {
 			this.show = false;
 		},
 		onOk() {
+			if (!this.groupId) {
+				this.$message.error("群组ID不能为空");
+				return;
+			}
 			let invitedUserIDs = [];
 			this.friends.forEach((f) => {
 				if (f.isCheck && !f.disabled) {
@@ -84,12 +88,12 @@ export default {
 				}
 			})
 			if (invitedUserIDs.length > 0) {
-				// V9 API: /group/invite_user_to_group
+				// V10 API: /group/invite_user_to_group (groupID 必须是字符串)
 				this.$http({
 					url: "/group/invite_user_to_group",
 					method: 'POST',
 					data: {
-						groupID: this.groupId,
+						groupID: String(this.groupId),
 						invitedUserIDs: invitedUserIDs
 					}
 				}).then(() => {
@@ -110,7 +114,7 @@ export default {
 	},
 	props: {
 		groupId: {
-			type: Number
+			type: [Number, String]
 		},
 		members: {
 			type: Array

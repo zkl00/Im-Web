@@ -70,10 +70,26 @@ export default {
 			this.loadGroupMembers(checkedIds, lockedIds, hideIds);
 		},
 		loadGroupMembers(checkedIds, lockedIds, hideIds) {
+			// V10 API: POST /group/get_group_member_list
 			this.$http({
-				url: `/group/members/${this.group.id}`,
-				method: 'get'
-			}).then((members) => {
+				url: '/group/get_group_member_list',
+				method: 'POST',
+				data: {
+					groupID: String(this.group.id),
+					pagination: {
+						pageNumber: 1,
+						showNumber: 500
+					}
+				}
+			}).then((data) => {
+				const members = (data.members || []).map(m => ({
+					userId: m.userID,
+					nickName: m.nickname,
+					showNickName: m.nickname,
+					headImage: m.faceURL,
+					roleLevel: m.roleLevel,
+					joinTime: m.joinTime
+				}));
 				members.forEach((m) => {
 					// 默认选择和锁定的用户
 					m.checked = checkedIds.indexOf(m.userId) >= 0;

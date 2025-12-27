@@ -562,7 +562,9 @@ export default defineStore('chatStore', {
 							groupStore.addGroup({
 								id: msgInfo.groupID,
 								name: msgInfo.groupName,
+								showGroupName: msgInfo.groupName,
 								headImage: msgInfo.groupFaceURL,
+								headImageThumb: msgInfo.groupFaceURL,
 								memberCount: msgInfo.groupMemberCount
 							});
 						}

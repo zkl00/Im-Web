@@ -653,18 +653,22 @@ export default {
 
 			if (this.isGroup) {
 				// 群聊: 使用 /msg/mark_conversation_as_read
-				this.$http({
-					url: '/msg/mark_conversation_as_read',
-					method: 'POST',
-					data: {
-						conversationID: conversationID,
-						userID: userID
-					}
-				}).then(() => {
-					console.log('[已读消息] 群聊会话已读成功:', conversationID);
-				}).catch((err) => {
-					console.error('[已读消息] 群聊会话已读失败:', err);
-				});
+				const maxSeq = this.getMaxSeq();
+				if (maxSeq > 0) {
+					this.$http({
+						url: '/msg/mark_conversation_as_read',
+						method: 'POST',
+						data: {
+							conversationID: conversationID,
+							userID: userID,
+							hasReadSeq: maxSeq
+						}
+					}).then(() => {
+						console.log('[已读消息] 群聊会话已读成功:', conversationID, 'hasReadSeq:', maxSeq);
+					}).catch((err) => {
+						console.error('[已读消息] 群聊会话已读失败:', err);
+					});
+				}
 			} else {
 				// 私聊: 使用 /msg/mark_msgs_as_read + seqs
 				const unreadSeqs = this.getUnreadMessageSeqs();
@@ -741,20 +745,53 @@ export default {
 			// });
 		},
 		loadGroup(groupId) {
+			// V10 API: POST /group/get_groups_info
 			this.$http({
-				url: `/group/find/${groupId}`,
-				method: 'get'
-			}).then((group) => {
-				this.group = group;
-				this.chatStore.updateChatFromGroup(group);
-				this.groupStore.updateGroup(group);
+				url: '/group/get_groups_info',
+				method: 'POST',
+				data: {
+					groupIDs: [String(groupId)]
+				}
+			}).then((data) => {
+				const groupInfo = data.groupInfos?.[0];
+				if (groupInfo) {
+					const group = {
+						id: groupInfo.groupID,
+						name: groupInfo.groupName,
+						showGroupName: groupInfo.groupName,
+						headImage: groupInfo.faceURL,
+						headImageThumb: groupInfo.faceURL,
+						ownerId: groupInfo.ownerUserID,
+						notice: groupInfo.notification,
+						memberCount: groupInfo.memberCount,
+						status: groupInfo.status
+					};
+					this.group = group;
+					this.chatStore.updateChatFromGroup(group);
+					this.groupStore.updateGroup(group);
+				}
 			});
 
+			// V10 API: POST /group/get_group_member_list
 			this.$http({
-				url: `/group/members/${groupId}`,
-				method: 'get'
-			}).then((groupMembers) => {
-				this.groupMembers = groupMembers;
+				url: '/group/get_group_member_list',
+				method: 'POST',
+				data: {
+					groupID: String(groupId),
+					pagination: {
+						pageNumber: 1,
+						showNumber: 500
+					}
+				}
+			}).then((data) => {
+				this.groupMembers = (data.members || []).map(m => ({
+					userId: m.userID,
+					nickName: m.nickname,
+					showNickName: m.nickname,
+					headImage: m.faceURL,
+					roleLevel: m.roleLevel,
+					joinTime: m.joinTime
+				}));
 			});
 		},
 		updateFriendInfo() {

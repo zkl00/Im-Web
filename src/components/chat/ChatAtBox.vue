@@ -21,7 +21,7 @@ export default {
 			default: ""
 		},
 		ownerId: {
-			type: Number,
+			type: [Number, String],
 		},
 		members: {
 			type: Array

@@ -15,7 +15,7 @@
           <add-group-member ref="addGroupMember" :groupId="group.id" :members="groupMembers"
             @reload="$emit('reload')"></add-group-member>
         </div>
-        <div class="member-tools" v-if="isOwner">
+        <div class="member-tools" v-if="canManage">
           <div class="tool-btn" title="选择成员移出群聊" @click="onRemove()">
             <i class="el-icon-minus"></i>
           </div>
@@ -95,12 +95,12 @@ export default {
     },
     onRemoveComplete(members) {
       let userIds = members.map(m => m.userId);
-      // V9 API: /group/kick_group
+      // V10 API: /group/kick_group
       this.$http({
         url: "/group/kick_group",
         method: 'POST',
         data: {
-          groupID: this.group.id,
+          groupID: String(this.group.id),
           kickedUserIDs: userIds
         }
       }).then(() => {
@@ -109,22 +109,22 @@ export default {
       })
     },
     loadGroupMembers() {
-      // V9 API: /group/get_group_member_list
+      // V10 API: /group/get_group_member_list
       this.$http({
         url: '/group/get_group_member_list',
         method: "POST",
         data: {
-          groupID: this.group.id,
+          groupID: String(this.group.id),
           pagination: {
             pageNumber: 1,
             showNumber: 500
           }
         }
       }).then((data) => {
-        // V9 返回格式: { members: [...], total: n }
         const members = (data?.members || []).map(m => ({
           userId: m.userID,
           nickName: m.nickname,
+          showNickName: m.nickname,
           headImage: m.faceURL,
           remark: '',
           roleLevel: m.roleLevel  // 100:群主, 60:管理员, 20:普通成员
@@ -192,8 +192,19 @@ export default {
       let member = this.groupMembers.find((m) => m.userId == this.group.ownerId);
       return member && member.showNickName;
     },
+    // 当前用户在群中的角色等级：100=群主, 60=管理员, 20=普通成员
+    myRoleLevel() {
+      const myId = this.mine.id;
+      const member = this.groupMembers.find(m => m.userId == myId);
+      return member ? member.roleLevel : 20;
+    },
+    // 是否是群主
     isOwner() {
-      return this.group.ownerId == this.mine.id;
+      return this.myRoleLevel === 100;
+    },
+    // 是否有管理权限（群主或管理员）
+    canManage() {
+      return this.myRoleLevel >= 60;
     },
     showMembers() {
       return this.groupMembers.filter((m) => !m.quit && m.showNickName.includes(this.searchText))

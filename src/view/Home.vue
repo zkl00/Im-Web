@@ -14,36 +14,42 @@
 								<div class="menu-item">
 									<span class="icon iconfont icon-chat"></span>
 									<div v-show="unreadCount > 0" class="unread-text">{{ unreadCount }}</div>
+									<span class="menu-label">消息</span>
 								</div>
 							</router-link>
 							<router-link class="link" v-bind:to="'/home/friend'">
 								<div class="menu-item">
 									<span class="icon iconfont icon-friend"></span>
+									<span class="menu-label">好友</span>
 								</div>
 							</router-link>
 							<router-link class="link" v-bind:to="'/home/friend-apply'">
-								<div class="menu-item" title="好友申请">
+								<div class="menu-item">
 									<span class="icon el-icon-bell" style="font-size: 22px"></span>
+									<div v-show="friendStore.applyCount > 0" class="unread-text">{{ friendStore.applyCount }}</div>
+									<span class="menu-label">申请</span>
 								</div>
 							</router-link>
 							<router-link class="link" v-bind:to="'/home/blacklist'">
-								<div class="menu-item" title="黑名单">
+								<div class="menu-item">
 									<span class="icon el-icon-warning-outline" style="font-size: 22px"></span>
+									<span class="menu-label">黑名单</span>
 								</div>
 							</router-link>
 							<router-link class="link" v-bind:to="'/home/group'">
 								<div class="menu-item">
 									<span class="icon iconfont icon-group" style="font-size: 28px"></span>
+									<span class="menu-label">群组</span>
 								</div>
 							</router-link>
 						</div>
 					</div>
 
 					<div class="botoom">
-						<div class="bottom-item" @click="onSwtichFullScreen">
+						<div class="bottom-item" @click="onSwtichFullScreen" title="全屏">
 							<i class="el-icon-full-screen"></i>
 						</div>
-						<div class="bottom-item" @click="showSetting">
+						<div class="bottom-item" @click="showSetting" title="设置">
 							<span class="icon iconfont icon-setting" style="font-size: 20px"></span>
 						</div>
 						<div class="bottom-item" @click="onExit()" title="退出">
@@ -122,6 +128,10 @@ export default {
 						this.pullOfflineMessage();
 						this.configStore.setAppInit(true);
 					}
+				});
+				// V2: 注册 RTC 信令回调
+				this.$wsApi.onRtcMessage((data) => {
+					this.handleRtcMessageV2(data);
 				});
 				this.$wsApi.onMessage((cmd, msgInfo) => {
 					if (cmd == 2) {
@@ -205,6 +215,8 @@ export default {
 				promises.push(this.friendStore.loadFriend());
 				// V9 API: 使用会话列表接口获取聊天和群信息
 				promises.push(this.chatStore.loadConversationList());
+				// 加载好友申请数量
+				this.friendStore.loadApplyCount();
 				return Promise.all(promises);
 			})
 		},
@@ -378,6 +390,12 @@ export default {
 				this.playAudioTip();
 			}
 		},
+		// V2: 处理 RTC 信令
+		handleRtcMessageV2(data) {
+			console.log('[Home] 收到 RTC 信令:', data);
+			// 转发给 RtcPrivateVideo 组件处理
+			this.$refs.rtcPrivateVideo.onRTCMessageV2(data);
+		},
 		handleSystemMessage(msg) {
 			// 用户被封禁
 			if (msg.type == this.$enums.MESSAGE_TYPE.USER_BANNED) {
@@ -388,6 +406,78 @@ export default {
 						this.onExit();
 					}
 				});
+				return;
+			}
+			// 新增好友通知 (contentType: 1201/1203)
+			if (msg.type == this.$enums.MESSAGE_TYPE.FRIEND_NEW) {
+				// 刷新好友列表
+				this.friendStore.loadFriend().then(() => {
+					// 解析通知内容，创建会话并插入提示消息
+					try {
+						const content = typeof msg.rawContent === 'object' ? msg.rawContent : JSON.parse(msg.content);
+						const detail = typeof content.detail === 'string' ? JSON.parse(content.detail) : content.detail;
+						// 获取好友ID（对方的ID）
+						const fromUserId = detail?.fromToUserID?.fromUserID;
+						const toUserId = detail?.fromToUserID?.toUserID;
+						const myId = this.userStore.userInfo.id;
+						const friendId = fromUserId === myId ? toUserId : fromUserId;
+
+						if (friendId) {
+							const friend = this.friendStore.findFriend(friendId);
+							const friendName = friend?.nickName || friendId;
+							// 创建会话
+							let chatInfo = {
+								type: 'PRIVATE',
+								targetId: friendId,
+								showName: friendName,
+								headImage: friend?.headImage || ''
+							};
+							this.chatStore.openChat(chatInfo);
+							// 插入提示消息
+							let tipMsg = {
+								id: `tip_${Date.now()}`,
+								type: this.$enums.MESSAGE_TYPE.TIP_TEXT,
+								content: `你已添加 ${friendName} 为好友，现在可以开始聊天了`,
+								sendTime: msg.sendTime || Date.now(),
+								selfSend: false
+							};
+							this.chatStore.insertMessage(tipMsg, chatInfo);
+						}
+					} catch (e) {
+						console.error('[handleSystemMessage] 解析好友通知失败:', e);
+					}
+				});
+				// 通知好友申请页面刷新
+				this.$eventBus.$emit('refreshFriendApply');
+				// 刷新申请角标
+				this.friendStore.loadApplyCount();
+				return;
+			}
+			// 好友申请被拒绝通知 (contentType: 1202)
+			if (msg.type == this.$enums.MESSAGE_TYPE.FRIEND_REJECTED) {
+				// 刷新好友列表
+				this.friendStore.loadFriend();
+				// 通知好友申请页面刷新
+				this.$eventBus.$emit('refreshFriendApply');
+				// 刷新申请角标
+				this.friendStore.loadApplyCount();
+				return;
+			}
+			// 删除好友通知 (contentType: 1204)
+			if (msg.type == this.$enums.MESSAGE_TYPE.FRIEND_DEL) {
+				// 解析通知内容获取好友ID
+				try {
+					const content = typeof msg.rawContent === 'object' ? msg.rawContent : JSON.parse(msg.content);
+					const detail = typeof content.detail === 'string' ? JSON.parse(content.detail) : content.detail;
+					const friendId = detail?.fromToUserID?.fromUserID || detail?.fromUserID;
+					if (friendId && friendId !== this.userStore.userInfo.id) {
+						this.friendStore.removeFriend(friendId);
+						this.chatStore.removePrivateChat(friendId);
+					}
+				} catch (e) {
+					// 解析失败，刷新好友列表
+					this.friendStore.loadFriend();
+				}
 				return;
 			}
 		},
@@ -545,31 +635,36 @@ export default {
 			}
 
 			.link:not(.router-link-active) .menu-item:hover {
-				background: var(--im-color-primary);
-				transform: scale(1.1);
+				color: white;
+				background: rgba(255, 255, 255, 0.1);
 			}
 
 			.menu-item {
 				position: relative;
 				color: #eee;
 				width: var(--width);
-				height: 46px;
-				width: 46px;
+				height: 56px;
 				display: flex;
+				flex-direction: column;
 				justify-content: center;
 				align-items: center;
-				margin-top: 30px;
+				margin-top: 20px;
 				border-radius: 10px;
 
 				.icon {
 					font-size: var(--icon-font-size)
 				}
 
+				.menu-label {
+					font-size: 10px;
+					margin-top: 4px;
+				}
+
 				.unread-text {
 					position: absolute;
 					background-color: var(--im-color-danger);
-					left: 28px;
-					top: 8px;
+					right: 6px;
+					top: 4px;
 					color: white;
 					border-radius: 30px;
 					padding: 0 5px;

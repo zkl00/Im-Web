@@ -123,7 +123,7 @@ export default {
 			sendImageUrl: "",
 			sendImageFile: "",
 			placeholder: "",
-			isReceipt: true,
+			isReceipt: false,
 			showRecord: false, // 是否显示语音录制弹窗
 			showSide: false, // 是否显示群聊信息栏
 			showHistory: false, // 是否显示历史聊天记录
@@ -346,10 +346,26 @@ export default {
 				return;
 			}
 
+			// 优先使用 friendStore 中的好友信息，如果没有则使用 userInfo
+			let friendInfo = this.friend || this.friendStore.findFriend(this.chat.targetId);
+			if (!friendInfo && this.userInfo && this.userInfo.id) {
+				// 如果好友列表中找不到，使用已加载的 userInfo
+				friendInfo = {
+					id: this.userInfo.id,
+					nickName: this.userInfo.nickName,
+					headImage: this.userInfo.headImage || this.userInfo.headImageThumb
+				};
+			}
+
+			if (!friendInfo) {
+				this.$message.error('无法获取好友信息');
+				return;
+			}
+
 			let rtcInfo = {
 				mode: mode,
 				isHost: true,
-				friend: this.friend,
+				friend: friendInfo,
 			}
 			// 通过home.vue打开单人视频窗口
 			this.$eventBus.$emit("openPrivateVideo", rtcInfo);
@@ -469,25 +485,22 @@ export default {
 				}
 			})
 		},
-		sendImageMessage(file) {
-			return new Promise((resolve, reject) => {
-				this.onImageBefore(file);
-				let formData = new FormData()
-				formData.append('file', file)
-				this.$http.post("/image/upload", formData, {
-					headers: {
-						'Content-Type': 'multipart/form-data'
-					}
-				}).then((data) => {
-					this.onImageSuccess(data, file);
-					resolve();
-				}).catch((res) => {
-					this.onImageFail(res, file);
-					reject();
-				})
-				this.$nextTick(() => this.$refs.chatInputEditor.focus());
-				this.scrollToBottom();
-			});
+		async sendImageMessage(file) {
+			this.onImageBefore(file);
+			try {
+				// 使用新的上传 API
+				const { uploadImage } = await import('@/api/upload.js');
+				const url = await uploadImage(file, {
+					userId: String(this.mine.id),
+					group: 'image'
+				});
+				this.onImageSuccess({ url }, file);
+			} catch (err) {
+				console.error('[上传图片] 失败:', err);
+				this.onImageFail(err, file);
+			}
+			this.$nextTick(() => this.$refs.chatInputEditor.focus());
+			this.scrollToBottom();
 		},
 		sendTextMessage(sendText, atUserIds) {
 			return new Promise((resolve, reject) => {
@@ -651,29 +664,30 @@ export default {
 			const conversationID = this.chat.conversationID || this.buildConversationID();
 			const userID = String(this.mine.id);
 
+			// 获取未读消息的 seq 列表
+			const unreadSeqs = this.getUnreadMessageSeqs();
+
 			if (this.isGroup) {
-				// 群聊: 使用 /msg/mark_conversation_as_read
-				const maxSeq = this.getMaxSeq();
-				if (maxSeq > 0) {
+				// 群聊: 使用 /msg/mark_conversation_as_read，传递 seqs 和 hasReadSeq 参数
+				if (unreadSeqs.length > 0) {
+					const maxSeq = Math.max(...unreadSeqs);
 					this.$http({
 						url: '/msg/mark_conversation_as_read',
 						method: 'POST',
 						data: {
 							conversationID: conversationID,
 							userID: userID,
+							seqs: unreadSeqs,
 							hasReadSeq: maxSeq
 						}
 					}).then(() => {
-						console.log('[已读消息] 群聊会话已读成功:', conversationID, 'hasReadSeq:', maxSeq);
+						console.log('[已读消息] 群聊已读成功:', conversationID, 'seqs:', unreadSeqs);
 					}).catch((err) => {
-						console.error('[已读消息] 群聊会话已读失败:', err);
+						console.error('[已读消息] 群聊已读失败:', err);
 					});
 				}
 			} else {
-				// 私聊: 使用 /msg/mark_msgs_as_read + seqs
-				const unreadSeqs = this.getUnreadMessageSeqs();
-				console.log('[readedMessage] 私聊, conversationID:', conversationID, 'seqs:', unreadSeqs);
-
+				// 私聊: 使用 /msg/mark_msgs_as_read
 				if (unreadSeqs.length > 0) {
 					this.$http({
 						url: '/msg/mark_msgs_as_read',
@@ -684,9 +698,14 @@ export default {
 							seqs: unreadSeqs
 						}
 					}).then(() => {
-						console.log('[已读消息] 私聊消息已读成功:', conversationID, 'seqs:', unreadSeqs);
+						console.log('[已读消息] 私聊已读成功:', conversationID, 'seqs:', unreadSeqs);
 					}).catch((err) => {
-						console.error('[已读消息] 私聊消息已读失败:', err);
+						// 忽略 seq > maxSeq 的错误（本地数据与服务端不同步导致）
+						if (err?.errCode === 1001 || (err?.message || '').includes('hasReadSeq')) {
+							console.warn('[已读消息] seq 超出范围，忽略:', err);
+						} else {
+							console.error('[已读消息] 私聊已读失败:', err);
+						}
 					});
 				}
 			}
@@ -696,20 +715,17 @@ export default {
 		getUnreadMessageSeqs() {
 			const seqs = [];
 			if (this.chat && this.chat.messages) {
-				// 调试: 打印最后几条消息的完整结构
-				const lastMsgs = this.chat.messages.slice(-3);
-				lastMsgs.forEach((m, i) => {
-					console.log(`[getUnreadMessageSeqs] 消息${i}: selfSend=${m.selfSend}, seq=${m.seq}, status=${m.status}, id=${m.id}`);
-				});
-
 				this.chat.messages.forEach(msg => {
-					// 只处理对方发送的、未读的、有seq的消息
-					if (!msg.selfSend && msg.seq && msg.status !== this.$enums.MESSAGE_STATUS.READED) {
-						seqs.push(msg.seq);
+					// 只处理对方发送的、未读的、有有效seq的消息
+					// seq 必须是正整数，过滤掉 0、null、undefined
+					const seq = Number(msg.seq);
+					if (!msg.selfSend && seq > 0 && msg.status !== this.$enums.MESSAGE_STATUS.READED) {
+						seqs.push(seq);
 					}
 				});
 			}
-			return seqs;
+			// 去重并排序
+			return [...new Set(seqs)].sort((a, b) => a - b);
 		},
 		// 获取会话中最大的消息序列号
 		getMaxSeq() {

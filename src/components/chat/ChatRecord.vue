@@ -98,26 +98,30 @@ export default {
 			this.mode = 'RECORD';
 			this.stateTip = "正在录音...";
 		},
-		onSendRecord() {
+		async onSendRecord() {
 			let wav = this.rc.getWAVBlob();
-			let name = new Date().getDate() + '.wav';
-			var formData = new window.FormData()
-			formData.append('file', wav, name);
-			this.$http({
-				url: '/file/upload',
-				data: formData,
-				method: 'post',
-				headers: {
-					'Content-Type': 'multipart/form-data'
-				}
-			}).then((url) => {
+			let name = Date.now() + '.wav';
+			// 将 Blob 转为 File
+			let file = new File([wav], name, { type: 'audio/wav' });
+
+			try {
+				// 使用新的上传 API
+				const { uploadFile } = await import('@/api/upload.js');
+				const url = await uploadFile(file, {
+					userId: String(this.userStore.userInfo.id),
+					group: 'audio'
+				});
+
 				let data = {
 					duration: parseInt(this.rc.duration),
 					url: url
 				}
 				this.$emit("send", data);
 				this.onClose();
-			})
+			} catch (err) {
+				console.error('[上传语音] 失败:', err);
+				this.$message.error('语音上传失败');
+			}
 		}
 	}
 }

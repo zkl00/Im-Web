@@ -282,9 +282,14 @@ export default {
 				cancelButtonText: '取消',
 				type: 'warning'
 			}).then(() => {
+				// V10 API: /group/dismiss_group
 				this.$http({
-					url: `/group/delete/${this.activeGroup.id}`,
-					method: 'delete'
+					url: '/group/dismiss_group',
+					method: 'POST',
+					data: {
+						groupID: String(this.activeGroup.id),
+						deleteMember: true
+					}
 				}).then(() => {
 					this.$message.success(`群聊'${this.activeGroup.name}'已解散`);
 					this.groupStore.removeGroup(this.activeGroup.id);

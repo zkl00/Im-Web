@@ -80,6 +80,10 @@ export default {
 			activeFriend: {}
 		}
 	},
+	mounted() {
+		// 进入好友页面时刷新好友列表
+		this.friendStore.loadFriend();
+	},
 	methods: {
 		onShowAddFriend() {
 			this.showAddFriend = true;
@@ -102,12 +106,19 @@ export default {
 					method: 'post',
 					data: {
 						ownerUserID: sessionStorage.getItem("userID"),
-						friendUserID: friend.id
+						friendUserID: String(friend.id)
 					}
 				}).then(() => {
 					this.$message.success("删除好友成功");
 					this.friendStore.removeFriend(friend.id);
 					this.chatStore.removePrivateChat(friend.id);
+					// 清空当前选中的好友信息
+					if (this.activeFriend.id === friend.id) {
+						this.activeFriend = {};
+						this.userInfo = {};
+					}
+				}).catch(() => {
+					this.$message.error("删除好友失败");
 				})
 			})
 		},
@@ -204,13 +215,17 @@ export default {
 			})
 		},
 		firstLetter(strText) {
+			// 处理空值
+			if (!strText) {
+				return '#';
+			}
 			// 使用pinyin-pro库将中文转换为拼音
 			let pinyinOptions = {
 				toneType: 'none', // 无声调
 				type: 'normal' // 普通拼音
 			};
 			let pyText = pinyin(strText, pinyinOptions);
-			return pyText[0];
+			return pyText[0] || '#';
 		},
 		isEnglish(character) {
 			return /^[A-Za-z]+$/.test(character);
@@ -224,10 +239,11 @@ export default {
 			// 按首字母分组
 			let map = new Map();
 			this.friendStore.friends.forEach((f) => {
-				if (f.deleted || (this.searchText && !f.nickName.includes(this.searchText))) {
+				const nickName = f.nickName || '';
+				if (this.searchText && !nickName.includes(this.searchText)) {
 					return;
 				}
-				let letter = this.firstLetter(f.nickName).toUpperCase();
+				let letter = this.firstLetter(nickName).toUpperCase();
 				// 非英文一律为#组
 				if (!this.isEnglish(letter)) {
 					letter = "#"

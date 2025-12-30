@@ -149,14 +149,23 @@ export default {
 				scrollbarWrap.addEventListener('scroll', this.onScroll);
 			}
 		});
+		// 监听好友申请刷新事件
+		this.$eventBus.$on('refreshFriendApply', this.onRefreshApply);
 	},
 	beforeDestroy() {
 		const scrollbarWrap = this.$refs.scrollbar?.$refs?.wrap;
 		if (scrollbarWrap) {
 			scrollbarWrap.removeEventListener('scroll', this.onScroll);
 		}
+		// 移除事件监听
+		this.$eventBus.$off('refreshFriendApply', this.onRefreshApply);
 	},
 	methods: {
+		onRefreshApply() {
+			// 刷新两个列表
+			this.loadReceivedApplyList();
+			this.loadSentApplyList();
+		},
 		switchTab(tab) {
 			this.activeTab = tab;
 			this.activeApply = null;
@@ -222,6 +231,8 @@ export default {
 					this.receivedList = list;
 					this.receivedTotal = pendingCount;  // 重置未处理数量
 				}
+				// 更新 store 中的申请数量
+				this.friendStore.setApplyCount(this.receivedTotal);
 				// 判断是否还有更多
 				this.receivedHasMore = list.length >= PAGE_SIZE;
 			}).catch((e) => {
@@ -294,6 +305,9 @@ export default {
 			}).then(() => {
 				this.$message.success('已同意好友申请');
 				this.activeApply.handleResult = 1;
+				// 更新申请数量
+				this.receivedTotal = Math.max(0, this.receivedTotal - 1);
+				this.friendStore.setApplyCount(this.receivedTotal);
 				// 刷新好友列表
 				this.friendStore.loadFriend();
 			}).catch((e) => {
@@ -323,6 +337,9 @@ export default {
 				}).then(() => {
 					this.$message.success('已拒绝好友申请');
 					this.activeApply.handleResult = -1;
+					// 更新申请数量
+					this.receivedTotal = Math.max(0, this.receivedTotal - 1);
+					this.friendStore.setApplyCount(this.receivedTotal);
 				}).catch((e) => {
 					this.$message.error('操作失败');
 					console.error(e);

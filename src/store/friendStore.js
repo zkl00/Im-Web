@@ -6,7 +6,8 @@ export default defineStore('friendStore', {
 	state: () => {
 		return {
 			friends: [], // 好友列表
-			timer: null
+			timer: null,
+			applyCount: 0 // 待处理的好友申请数量
 		}
 	},
 	actions: {
@@ -24,7 +25,12 @@ export default defineStore('friendStore', {
 			})
 		},
 		removeFriend(id) {
-			this.friends.filter(f => f.id == id).forEach(f => f.deleted = true);
+			// 直接从数组中移除好友，确保响应式更新
+			const targetId = String(id);
+			const index = this.friends.findIndex(f => String(f.id) === targetId);
+			if (index !== -1) {
+				this.friends.splice(index, 1);
+			}
 		},
 		addFriend(friend) {
 			if (this.friends.some(f => f.id == friend.id)) {
@@ -73,6 +79,29 @@ export default defineStore('friendStore', {
 			this.timer && clearTimeout(this.timer);
 			this.friends = [];
 			this.timer = null;
+			this.applyCount = 0;
+		},
+		setApplyCount(count) {
+			this.applyCount = count;
+		},
+		loadApplyCount() {
+			const userID = sessionStorage.getItem("userID");
+			if (!userID) return;
+			http({
+				url: '/friend/get_friend_apply_list',
+				method: 'POST',
+				data: {
+					userID: userID,
+					pagination: {
+						pageNumber: 1,
+						showNumber: 100
+					}
+				}
+			}).then((data) => {
+				const list = data.FriendRequests || data.friendRequests || [];
+				const pendingCount = list.filter(item => item.handleResult === 0).length;
+				this.applyCount = pendingCount;
+			}).catch(() => {});
 		},
 		loadFriend() {
 			return new Promise((resolve, reject) => {
@@ -114,7 +143,7 @@ export default defineStore('friendStore', {
 	},
 	getters: {
 		isFriend: (state) => (userId) => {
-			return state.friends.filter((f) => !f.deleted).some((f) => f.id == userId);
+			return state.friends.some((f) => f.id == userId);
 		},
 		findFriend: (state) => (userId) => {
 			return state.friends.find((f) => f.id == userId);

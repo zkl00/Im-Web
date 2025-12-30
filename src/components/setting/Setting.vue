@@ -45,7 +45,6 @@ export default {
 		return {
 			userInfo: {},
 			maxSize: 5 * 1024 * 1024,
-			action: "/image/upload",
 			rules: {
 				nickName: [{
 					required: true,
@@ -85,6 +84,34 @@ export default {
 		onUploadSuccess(data, file) {
 			this.userInfo.headImage = data.url;
 			this.userInfo.headImageThumb = data.url;
+		},
+		loadUserInfo() {
+			const userID = sessionStorage.getItem("userID");
+			if (!userID) return;
+			this.$http({
+				url: '/user/get_users_info',
+				method: 'POST',
+				data: {
+					userIDs: [userID]
+				}
+			}).then((data) => {
+				const user = data.usersInfo?.[0];
+				if (user) {
+					this.userInfo = {
+						id: user.userID,
+						userName: user.userID,
+						nickName: user.nickname,
+						headImage: user.faceURL,
+						headImageThumb: user.faceURL,
+						signature: user.ex || '',
+						sex: 0
+					};
+				}
+			}).catch(() => {
+				// 接口失败时使用 store 中的数据
+				let mine = this.userStore.userInfo;
+				this.userInfo = JSON.parse(JSON.stringify(mine));
+			});
 		}
 	},
 	props: {
@@ -94,10 +121,10 @@ export default {
 	},
 	computed: {},
 	watch: {
-		visible: function () {
-			// 深拷贝
-			let mine = this.userStore.userInfo;
-			this.userInfo = JSON.parse(JSON.stringify(mine));
+		visible: function (val) {
+			if (val) {
+				this.loadUserInfo();
+			}
 		}
 	}
 }

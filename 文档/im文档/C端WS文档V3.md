@@ -119,16 +119,40 @@ ws://{host}:10001/?sendID={userID}&platformID=5&token={token}&sdkType=js
 | 111 | Revoke | 撤回消息 |
 | 114 | Quote | 引用消息 |
 
+### 5.2 通知消息类型 (NotificationContentType)
+
+| 值 | 类型 | 说明 |
+|----|------|------|
+| 2101 | MsgRevokeNotification | 撤回消息通知 |
+| 2102 | DeleteMsgsNotification | 删除消息通知 |
+| 2200 | HasReadReceipt | 已读回执 |
+
+### 5.3 消息状态 (Status)
+
+| Status值 | 常量名               | 含义       | 前端处理建议 |
+|----------|----------------------|------------|--------------|
+| 0        | MsgStatusNotExist    | 消息不存在 | 不显示该消息 |
+| 1        | MsgStatusSending     | 发送中     | 显示发送中状态（loading图标） |
+| 2        | MsgStatusSendSuccess | 发送成功   | 正常显示消息 |
+| 3        | MsgStatusSendFailed  | 发送失败   | 显示发送失败，提供重发按钮 |
+| 4        | MsgStatusHasDeleted  | 已删除     | 不显示或显示"消息已删除" |
+| 5        | MsgStatusFiltered    | 已过滤     | 不显示或显示"消息已被过滤" |
+
+> **注意**:
+> - `status=1` 表示发送中，不是正常状态
+> - `status=2` 才是发送成功的正常消息
+> - 撤回消息通过 `contentType=2101` 通知来标识，不是通过 status 字段
+
 ## 6. 会话类型 (SessionType)
 
-| 值 | 说明 |
-|----|------|
-| 1 | 单聊 |
-| 2 | 群聊 |
-| 3 | 超级群 |
-| 4 | 通知会话 |
+| 值 | 说明       |
+|----|----------|
+| 1 | 单聊       |
+| 2 | 群聊(暂不支持) |
+| 3 | 超级群      |
+| 4 | 通知会话     |
 
-## 7. 前端发送消息详细对接
+## 7. 前端消息收发详细对接
 
 ### 7.1 发送消息完整流程
 
@@ -151,7 +175,160 @@ ws://{host}:10001/?sendID={userID}&platformID=5&token={token}&sdkType=js
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 7.2 MsgData 结构 (Protobuf)
+### 7.2 接收消息完整流程
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  1. 监听 WebSocket onmessage 事件                                 │
+│     收到 reqIdentifier=2001 的推送消息                            │
+├─────────────────────────────────────────────────────────────────┤
+│  2. 解析 JSON 获取 data 字段                                      │
+│     data 是 Base64 编码的字符串                                   │
+├─────────────────────────────────────────────────────────────────┤
+│  3. Base64 解码 → 二进制数据                                      │
+├─────────────────────────────────────────────────────────────────┤
+│  4. Protobuf 解码 → PushMessages 对象                             │
+│     包含: msgs (普通消息), notificationMsgs (通知消息)             │
+├─────────────────────────────────────────────────────────────────┤
+│  5. 遍历 PushMessages.msgs 获取 MsgData 数组                      │
+├─────────────────────────────────────────────────────────────────┤
+│  6. 解析 MsgData.content (bytes → JSON字符串)                     │
+│     根据 contentType 解析不同的消息内容                            │
+├─────────────────────────────────────────────────────────────────┤
+│  7. 根据 status 判断消息状态，更新 UI                              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### 接收消息 MsgData 完整字段说明
+
+| 字段 | 类型 | Protobuf编号 | 说明 |
+|------|------|--------------|------|
+| sendID | string | 1 | 发送者用户ID |
+| recvID | string | 2 | 接收者用户ID（单聊时有值） |
+| groupID | string | 3 | 群组ID（群聊时有值） |
+| clientMsgID | string | 4 | 客户端消息唯一ID |
+| serverMsgID | string | 5 | 服务端消息唯一ID |
+| senderPlatformID | int32 | 6 | 发送者平台ID（见第2章） |
+| senderNickname | string | 7 | 发送者昵称 |
+| senderFaceURL | string | 8 | 发送者头像URL |
+| sessionType | int32 | 9 | 会话类型：1=单聊, 3=超级群, 4=通知 |
+| msgFrom | int32 | 10 | 消息来源：100=用户消息, 200=系统消息 |
+| contentType | int32 | 11 | 消息内容类型（见第5章） |
+| content | bytes | 12 | 消息内容（JSON格式的字节数组） |
+| seq | int64 | 14 | 消息序列号（会话内唯一递增） |
+| sendTime | int64 | 15 | 服务端发送时间戳（毫秒） |
+| createTime | int64 | 16 | 消息创建时间戳（毫秒） |
+| **status** | **int32** | **17** | **消息状态（见5.3章节）** |
+| isRead | bool | 18 | 是否已读 |
+| options | map<string,bool> | 19 | 消息选项 |
+| offlinePushInfo | OfflinePushInfo | 20 | 离线推送配置 |
+| atUserIDList | []string | 21 | @的用户ID列表 |
+| attachedInfo | string | 22 | 附加信息 |
+| ex | string | 23 | 扩展字段 |
+
+#### 接收消息示例 (JSON 格式展示)
+
+```json
+{
+  "sendID": "user123",
+  "recvID": "user456",
+  "groupID": "",
+  "clientMsgID": "user123_1703580000000",
+  "serverMsgID": "4fabe2535b79129cb0078c1d0dddf155",
+  "senderPlatformID": 5,
+  "senderNickname": "张三",
+  "senderFaceURL": "https://xxx/avatar.jpg",
+  "sessionType": 1,
+  "msgFrom": 100,
+  "contentType": 101,
+  "content": "{\"text\":\"你好\"}",
+  "seq": 123,
+  "sendTime": 1703580000000,
+  "createTime": 1703579999000,
+  "status": 2,
+  "isRead": false,
+  "options": {},
+  "atUserIDList": [],
+  "attachedInfo": "",
+  "ex": ""
+}
+```
+
+#### 前端消息状态判断逻辑
+
+```javascript
+function getMessageDisplayInfo(msg) {
+  // 1. 检查消息状态
+  switch (msg.status) {
+    case 0: // MsgStatusNotExist
+      return { show: false, reason: '消息不存在' };
+    case 1: // MsgStatusSending
+      return { show: true, status: 'sending', text: '发送中...' };
+    case 2: // MsgStatusSendSuccess
+      return { show: true, status: 'success' };
+    case 3: // MsgStatusSendFailed
+      return { show: true, status: 'failed', text: '发送失败', canRetry: true };
+    case 4: // MsgStatusHasDeleted
+      return { show: false, reason: '消息已删除' };
+    case 5: // MsgStatusFiltered
+      return { show: false, reason: '消息已过滤' };
+  }
+
+  // 2. 检查是否被撤回（需要本地维护撤回状态）
+  if (msg.isRevoked) {
+    if (msg.revokeInfo.isAdminRevoke) {
+      return { show: true, status: 'revoked', text: '管理员撤回了一条消息' };
+    } else if (msg.revokeInfo.revokerUserID === currentUserID) {
+      return { show: true, status: 'revoked', text: '你撤回了一条消息' };
+    } else {
+      return { show: true, status: 'revoked', text: '对方撤回了一条消息' };
+    }
+  }
+
+  // 3. 正常显示消息
+  return { show: true, status: 'normal' };
+}
+```
+
+#### 前端本地存储建议
+
+```javascript
+// 消息存储结构
+const messageStore = {
+  // 按会话ID分组存储
+  conversations: {
+    "si_user123_user456": {
+      messages: [
+        {
+          // ... MsgData 原始字段 ...
+
+          // 前端额外维护的字段
+          isRevoked: false,        // 是否被撤回
+          revokeInfo: null,        // 撤回信息 (RevokeMsgTips)
+          localStatus: 'success',  // 本地状态：sending/success/failed
+          retryCount: 0            // 重试次数
+        }
+      ],
+      maxSeq: 123,
+      minSeq: 1
+    }
+  }
+};
+
+// 收到撤回通知时更新本地消息
+function handleRevokeNotification(revokeTips) {
+  const conversation = messageStore.conversations[revokeTips.conversationID];
+  if (!conversation) return;
+
+  const msg = conversation.messages.find(m => m.seq === revokeTips.seq);
+  if (msg) {
+    msg.isRevoked = true;
+    msg.revokeInfo = revokeTips;
+  }
+}
+```
+
+### 7.3 发送消息 MsgData 结构 (Protobuf)
 
 发送消息时，`data` 字段需要是 `MsgData` 的 Protobuf 编码：
 
@@ -162,7 +339,7 @@ ws://{host}:10001/?sendID={userID}&platformID=5&token={token}&sdkType=js
 | groupID | string | 群聊必填 | 群组ID（群聊时填写） |
 | clientMsgID | string | 是 | 客户端消息唯一ID，建议格式: `{sendID}_{timestamp}` |
 | senderPlatformID | int32 | 是 | 发送者平台: 1=iOS, 2=Android, 5=Web |
-| sessionType | int32 | 是 | 会话类型: 1=单聊, 2=群聊 |
+| sessionType | int32 | 是 | 会话类型: 1=单聊, 2=群聊(写扩散，暂不支持)，3=群聊（读扩散），4=系统通知 |
 | contentType | int32 | 是 | 消息内容类型: 101=文本, 102=图片等 |
 | content | bytes | 是 | 消息内容，JSON 格式的字节数组 |
 | createTime | int64 | 是 | 创建时间戳（毫秒） |
@@ -171,7 +348,7 @@ ws://{host}:10001/?sendID={userID}&platformID=5&token={token}&sdkType=js
 | atUserIDList | []string | 否 | @的用户ID列表（群聊） |
 | ex | string | 否 | 扩展字段 |
 
-### 7.3 各类消息的 Content 格式
+### 7.4 各类消息的 Content 格式
 
 #### 文本消息 (contentType=101)
 ```json
@@ -289,7 +466,7 @@ ws://{host}:10001/?sendID={userID}&platformID=5&token={token}&sdkType=js
 }
 ```
 
-### 7.4 JavaScript 完整示例
+### 7.5 JavaScript 完整示例
 
 ```javascript
 // ============ 1. 引入 protobuf.js ============
@@ -314,16 +491,17 @@ message MsgData {
   int32 msgFrom = 10;
   int32 contentType = 11;
   bytes content = 12;
-  int64 seq = 13;
-  int64 sendTime = 14;
-  int64 createTime = 15;
-  int32 status = 16;
-  bool isRead = 17;
-  map<string, bool> options = 18;
-  OfflinePushInfo offlinePushInfo = 19;
-  repeated string atUserIDList = 20;
-  string attachedInfo = 21;
-  string ex = 22;
+  // 字段 13 保留未使用
+  int64 seq = 14;
+  int64 sendTime = 15;
+  int64 createTime = 16;
+  int32 status = 17;
+  bool isRead = 18;
+  map<string, bool> options = 19;
+  OfflinePushInfo offlinePushInfo = 20;
+  repeated string atUserIDList = 21;
+  string attachedInfo = 22;
+  string ex = 23;
 }
 
 message OfflinePushInfo {
@@ -332,6 +510,7 @@ message OfflinePushInfo {
   string ex = 3;
   string iOSPushSound = 4;
   bool iOSBadgeCount = 5;
+  string signalInfo = 6;
 }
 
 // 发送消息响应
@@ -339,6 +518,7 @@ message SendMsgResp {
   string serverMsgID = 1;
   string clientMsgID = 2;
   int64 sendTime = 3;
+  int64 seq = 4;           // 消息序列号
 }
 
 // 获取最新序列号请求
@@ -359,7 +539,25 @@ message PushMessages {
 }
 
 message PullMsgs {
-  repeated MsgData msgs = 1;
+  repeated MsgData Msgs = 1;  // 注意: 大写 M
+  bool isEnd = 2;
+}
+
+// 通知消息内容封装
+message NotificationElem {
+  string detail = 1;          // 通知详情 JSON 字符串
+}
+
+// 撤回消息通知
+message RevokeMsgTips {
+  string revokerUserID = 1;   // 撤回者用户ID
+  string clientMsgID = 2;     // 被撤回消息的客户端ID
+  int64 revokeTime = 3;       // 撤回时间戳（毫秒）
+  // 字段 4 保留未使用
+  int32 sesstionType = 5;     // 会话类型 (注意拼写: sesstionType)
+  int64 seq = 6;              // 被撤回消息的序列号
+  string conversationID = 7;  // 会话ID
+  bool isAdminRevoke = 8;     // 是否管理员撤回
 }
 `;
 
@@ -780,7 +978,7 @@ client.getMaxSeq()
   .catch(err => console.error('获取失败:', err));
 ```
 
-### 7.5 其他请求类型
+### 7.6 其他请求类型
 
 #### 获取最新序列号 (reqIdentifier=1001)
 
@@ -842,7 +1040,7 @@ data: "CiA0ZmFiZTI1MzViNzkxMjljYjAwNzhjMWQwZGRkZjE1NRIWYWxpY2UxMjRfMTc2NjYzMDA4N
 - sendTime: 1766630084563 (时间戳)
 ```
 
-### 7.6 服务端推送消息 (reqIdentifier=2001)
+### 7.7 服务端推送消息 (reqIdentifier=2001)
 
 服务端会主动推送新消息，`data` 字段为 `PushMessages`（Base64 编码）：
 
@@ -853,22 +1051,139 @@ message PushMessages {
 }
 
 message PullMsgs {
-  repeated MsgData msgs = 1;
+  repeated MsgData Msgs = 1;  // 注意: 大写 M
+  bool isEnd = 2;
 }
 ```
 
 > **处理流程**: 收到推送 → Base64 解码 → Protobuf 解码 → 解析 MsgData
 >
-> 完整处理代码请参考上方 `KKIMWebSocket` 类中的 `handlePushMessage` 方法。
+> 完整字段说明和处理逻辑请参考 **7.2 接收消息完整流程** 章节。
 
-### 7.7 踢下线和登出通知
+### 7.8 撤回消息通知处理 (contentType=2101)
+
+当有消息被撤回时，服务端会推送 `contentType=2101` 的通知消息。
+
+#### 数据解析流程
+
+```
+PushMessages.notificationMsgs
+    │
+    ▼
+MsgData (contentType=2101)
+    │
+    ▼ TextDecoder.decode(content)
+NotificationElem { detail: "{...}" }
+    │
+    ▼ JSON.parse(detail)
+RevokeMsgTips {
+  revokerUserID: "user1",
+  clientMsgID: "xxx",
+  seq: 123,
+  conversationID: "si_user1_user2",
+  revokeTime: 1703580000000,
+  sesstionType: 1,
+  isAdminRevoke: false
+}
+```
+
+#### RevokeMsgTips 字段说明
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| revokerUserID | string | 执行撤回操作的用户ID |
+| clientMsgID | string | 被撤回消息的客户端消息ID |
+| revokeTime | int64 | 撤回时间戳（毫秒） |
+| sesstionType | int32 | 会话类型 (1=单聊, 3=群聊) **注意拼写** |
+| seq | int64 | 被撤回消息的序列号 |
+| conversationID | string | 会话ID |
+| isAdminRevoke | bool | 是否为管理员/群主撤回 |
+
+#### JavaScript 处理示例
+
+```javascript
+// 在 handlePushMessage 方法中添加撤回消息处理
+handlePushMessage(message) {
+  const bytes = this.base64ToUint8Array(message.data);
+  const pushMessages = this.protoTypes.PushMessages.decode(bytes);
+
+  // 处理通知消息
+  if (pushMessages.notificationMsgs) {
+    for (const [conversationID, pullMsgs] of Object.entries(pushMessages.notificationMsgs)) {
+      for (const msg of pullMsgs.Msgs || []) {
+        // 判断是否为撤回消息通知
+        if (msg.contentType === 2101) {
+          this.handleRevokeNotification(msg, conversationID);
+        }
+      }
+    }
+  }
+}
+
+// 处理撤回消息通知
+handleRevokeNotification(msgData, conversationID) {
+  try {
+    // 1. 解析 content 得到 NotificationElem
+    const contentStr = new TextDecoder().decode(msgData.content);
+    const notificationElem = JSON.parse(contentStr);
+
+    // 2. 解析 detail 得到 RevokeMsgTips
+    const revokeTips = JSON.parse(notificationElem.detail);
+
+    console.log('收到撤回通知:', {
+      会话ID: revokeTips.conversationID,
+      被撤回消息序号: revokeTips.seq,
+      被撤回消息ID: revokeTips.clientMsgID,
+      撤回者: revokeTips.revokerUserID,
+      是否管理员撤回: revokeTips.isAdminRevoke,
+      撤回时间: new Date(revokeTips.revokeTime)
+    });
+
+    // 3. 更新 UI - 根据 seq 找到对应消息并标记为已撤回
+    this.onMessageRevoked && this.onMessageRevoked(revokeTips);
+
+  } catch (error) {
+    console.error('解析撤回通知失败:', error);
+  }
+}
+
+// UI 更新示例
+onMessageRevoked(tips) {
+  // 在消息列表中找到被撤回的消息
+  const message = this.findMessageBySeq(tips.conversationID, tips.seq);
+  if (message) {
+    message.isRevoked = true;
+    message.revokeInfo = tips;
+
+    // 根据撤回者显示不同文案
+    if (tips.isAdminRevoke) {
+      message.displayText = '管理员撤回了一条消息';
+    } else if (tips.revokerUserID === this.currentUserID) {
+      message.displayText = '你撤回了一条消息';
+    } else {
+      message.displayText = '对方撤回了一条消息';
+    }
+
+    // 触发 UI 刷新
+    this.refreshMessageList(tips.conversationID);
+  }
+}
+```
+
+#### 注意事项
+
+1. **字段拼写**: proto 中 `sesstionType` 多了一个 `s`，不是 `sessionType`
+2. **查找被撤回消息**: 优先使用 `seq` + `conversationID` 定位，比 `clientMsgID` 更可靠
+3. **Proto 版本一致**: 如果解析报 `RangeError`，说明前端 proto 文件与服务端不一致
+
+### 7.9 踢下线和登出通知
 
 | reqIdentifier | 说明 | 处理方式 |
 |---------------|------|---------|
 | 2002 | 踢下线通知（账号在其他设备登录） | 提示用户重新登录，断开连接 |
 | 2003 | 登出通知 | 清理本地状态，断开连接 |
 
-### 7.8 常见错误码
+### 7.10 常见错误码
 
 | errCode | 说明 | 处理建议 |
 |---------|------|---------|
